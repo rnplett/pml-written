@@ -1,0 +1,229 @@
+---
+title: "Machine Recognition of Exercise Errors"
+author: "Roland Plett"
+date: "February 22, 2015"
+output: html_document
+---
+### Executive Summary
+This report describes a methodolgy for recognizing excercise techniques using 
+machine learning and prediction. Both correct and incorrect techniques are identified.
+
+There are numerous digitization products available on the market today that capture
+the movement of your body as you exercise. This report starts with readings that 
+were taken  from accelerometers on the belt, forearm, arm and dumbell of 6 participants.
+They were asked to perform arm curls in 6 different ways; only one of which is correct.
+
+Using only the accelerometer data and some derived data this report demonstrates how
+a common machine learning algorythm can be used to identify which of the 6 techniques a 
+participant used when doing an arm curl.
+
+After training the algorythm all of the 20 test cases were identified correctly
+by the algorythm.
+
+### Preliminary Steps
+
+<b>Loading Data:</b><br>
+The data used for this report is downloaded directly from the published location.
+A seperate csv file was provided for training and testing.  The training file contains
+both the training data as well as the cross-validation data that will be used
+during the training phase for feature selection. The second file called "testing" is for
+the final validation test so it is renamed validation.
+
+```{r echo=FALSE, message=FALSE}
+# load the data from the published source
+url <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+f <- download.file(url, destfile = "./data.csv", method="curl")
+data <- read.table("./data.csv", header=TRUE, sep = ",", na.strings = c(""," ","NA"))
+```
+
+```{r echo=FALSE, message=FALSE}
+# load the test data from the published source
+url <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+f <- download.file(url, destfile = "./validation.csv", method="curl")
+validation <- read.csv("./validation.csv")
+```
+
+<b>Loading Packages:</b><br>
+The heavy lifting in this report is done by the *caret* and *randomForest* packages
+that are used to do the machane learning components of the report. 
+
+```{r echo=FALSE, message=FALSE}
+# load the packages required
+require(caret)
+require(randomForest)
+```
+
+### Slicing The Data
+
+Before feature selection and training begins it's important to set some of the 
+training dataset aside for cross validation work before the algorythm is tested
+with the final test cases used for grading.
+
+In this case 25% of the training set is set aside in a testing data set for cross
+validation. The training is accomplished with the remaining 75%.
+
+```{r}
+set.seed(1234)
+inTrain <- createDataPartition(data[,160], p=0.75, list = FALSE)
+
+training <- data[inTrain,]
+testing <- data[-inTrain,]
+# the final validation dataset was created when it was loaded above
+```
+
+### Training
+
+<b>Feature Selection</b><br>
+Training begins with feature selection and transfomation in the training set.
+anything that is done to the training set features must be done in the same
+way to the cross validation data and the final validation data before predictions
+can be made.
+
+It is important to reduce the number of features used for modeling to minimize 
+overfitting and minimize error growth that comes with higher feature counts.
+
+This report is based on two very simple feature selection methods:<br>
+1) <u>remove descriptive features:</u> The initial step was to remove the first 7
+columns of the data that contained username, timestamps, ID's and other descriptive
+information. Although these could have a helpful correlation with the outcomes it seems
+unlikely and most of them would need transformation to a meaningful numeric before
+they could be modeled. If needed they will be re-introduced later on.<br>
+2) <u>remove features with NA's:</u> After reviewing a summary of the training data
+it became obvious that about half the features had nice continuous, well distributed
+data and the other half had a number of NA's and poorly distributed numeric values.
+As a second selection step these fields were removed from the trainingset.
+
+```{r}
+
+# Remove the descriptive features at the beginning of the data set.
+desc <- c(1:7)
+training <- training[,-desc]
+
+# Remove all features with NA's
+notNAcols <- apply(training, 2, function(x) !any(is.na(x)))
+training <- training[,notNAcols]
+
+```
+
+<b> Additional Feature Selection Options:</b><br>
+A number of more sophisticated and complex methods can be used for reducing the 
+feature count and transforming features to create a smaller number of features
+containing most of the variance information.
+
+The following selection methods were prepared for use in this report and then
+were not used when the results of the earlier selection methods proved to be adequate.<br>
+1)<u>Near Zero Variance Features:</u> Features that have very little variance 
+typically don't provide helpful predictive information. A way to identify these
+features is to use the nearZeroVar() function in the caret package.<br>
+2)<u>Feature cross correlation:</u> Correlation between features usually means 
+that they carry similar reduntant information so only one of the features is required
+for prediction. A way to identify highly cross correlated features is using the
+findCorrelation() function in the caret package.
+
+```{r echo=FALSE}
+# identify all the predictors that have near zero variance
+# remove the near zero variance predictors
+# nzv <- nearZeroVar(training[,-length(training)])
+# training <- training[,-nzv]
+
+# identify all the predictors that have more than .75 correlation with other
+# predictors and remove them
+# features <- training[,-length(training)]
+# fcorr <- cor(features)
+# hicorr <- findCorrelation(fcorr, 0.75)
+# training <- training[,-hicorr]
+
+# summary(training)
+```
+
+<b>Fitting a Model</b><br>
+This report is based on a random forest model. This method was chosen for a few
+reasons including:<br>
+- the data is relatively well distributed across the 6 different outcomes which
+makes it well suited to tree algorythms.<br>
+- during data exploration there was no apparent pattern in the data that suggested
+the use of a linear model or clustering model.<br>
+
+The randomForest package was used after recognizing its performance advantages over
+the train function in the caret package.
+
+```{r}
+Fit <- randomForest(classe ~ . , data = training)
+Fit
+```
+
+The confusion matrix indicates that the in sample error is very low for each outcome
+class so even with the simple feature selection methods the algorythm provides strong
+results.
+
+### Expected Out of Sample Error
+
+The random forest algorythm has a cross-validation feature built in that you can
+see in the output of the algorythm above. It is labelled as OOB or Out of Bag error.
+This is calculated from the bootstrapping part of the random forest algorythm and
+provides an estimate of the out of sample error.
+
+In this case the OOB error is 0.44% which appears to be very low. If this percentage
+was similar in size to any one outcome class then it could be a concern but each outcome
+class in this data is at least 20 times the size of this error rate (as a percent of the whole) 
+so we move on with confidence to the next validation step. The next step is predicting 
+the outcomes of the cross-validation data set.
+
+### Cross Validation
+
+The training set was sliced to provide a 25% cross-validation data set that is now
+used to further validate out of sample errors estimated in the training process.
+
+```{r}
+testing <- testing[,-desc]
+testing <- testing[,notNAcols]
+# testing <- testing[,-nzv]
+# testing <- testing[,-hicorr]
+# summary(testing)
+
+y <- predict(Fit,testing)
+table(observed = testing[,length(testing)], predicted = y)
+```
+
+From this data it's clear that all outcomes were predicted with a very high
+degree of acuracy. This provides enough validation to proceed to final validation
+and submission of those results for grading.
+
+### Final Validation
+
+In the same way that the cross-validation data was used for prediction, the final
+grading data set is run through the prediction algorythm.
+
+```{r}
+validation <- validation[,-desc]
+validation <- validation[,notNAcols]
+# validation <- validation[,-nzv]
+# validation <- validation[,-hicorr]
+# summary(validation)
+
+y <- predict(Fit,validation)
+y
+```
+
+In this case there are no observed values in the data set to compare the predicted values
+with but when the predicted results are submitted for grading <b>100% of the predictions
+are correct</b>.
+
+### Submitting the Results
+
+For completeness the code that was used to create the submission files is included
+here:
+
+```{r}
+pml_write_files = function(x){
+  n = length(x)
+  for(i in 1:n){
+    filename = paste0("problem_id_",i,".txt")
+    write.table(x[i],file=filename,quote=FALSE,row.names=FALSE,col.names=FALSE)
+  }
+}
+
+pml_write_files(y)
+```
+
+
